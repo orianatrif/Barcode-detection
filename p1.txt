@@ -1,0 +1,150 @@
+#include "lab1.hh"
+
+#include <math.h>
+#include <stdio.h>
+
+#include <fstream>
+#include <iostream>
+#include <queue>
+#include <random>
+#include <string>
+#define PI 3.14159265358979323846
+
+void utcn::ip::Lab1::runLab() {
+  // int op;
+  // do {
+  //   utcn::ip::Lab1::printMenu(LAB1_MENU);
+  //   std::cin >> op;
+  //   switch (op) {
+  //     case 0:
+  //       break;
+  //     case 1:
+  std::cout<<"Open image"<<std::endl;
+        testOpenImage();
+  //       break;
+  //
+  //     default:
+  //       std::cout << "Invalid selection" << std::endl;
+  //   }
+  // } while (op != 0);
+}
+
+void computeLuminance(cv::Mat* src, int line, std::vector<double>& luminance) {
+  int w = src->cols;
+  luminance.resize(w);
+  //scanline here too
+
+  for (int j = 0; j < w; j++) {
+    cv::Vec3b color = src->at<cv::Vec3b>(line, j);
+    luminance[j] = 0.299 * color[2] + 0.587 * color[1] + 0.114 * color[0];
+  }
+}
+
+cv::Mat enhanceBarcodeEdges(const cv::Mat& edges) {
+  cv::Mat dilated;
+  cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(21, 7));
+  cv::dilate(edges, dilated, kernel);
+  return dilated;
+}
+std::vector<cv::Rect> findBarcodeRegions(const cv::Mat& image) {
+  std::vector<std::vector<cv::Point>> contours;
+  cv::findContours(image, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+  std::vector<cv::Rect> barcodeRegions;
+  for (const auto& contour : contours) {
+    cv::Rect boundingBox = cv::boundingRect(contour);
+    barcodeRegions.push_back(boundingBox);
+  }
+  return barcodeRegions;
+}
+
+std::vector<cv::Rect> filterBarcodeRegions(const std::vector<cv::Rect>& barcodeRegions) {
+  std::vector<cv::Rect> filtered;
+  for (const auto& region : barcodeRegions) {
+    // Check aspect ratio, size, or other heuristic filters
+    if (region.width > region.height * 3) { // Example filter for barcode-like aspect ratio
+      filtered.push_back(region);
+    }
+  }
+  return filtered;
+}
+
+
+cv::Mat detectEdges(const cv::Mat& src) {
+  cv::Mat gray, blurred, edges;
+  // Convert to grayscale
+  cv::cvtColor(src, gray, cv::COLOR_BGR2GRAY);
+  // Apply Gaussian blur to reduce noise
+  cv::GaussianBlur(gray, blurred, cv::Size(5, 5), 1.5);
+  // Use Canny edge detector
+  cv::Canny(blurred, edges, 50, 150);
+  return edges;
+}
+
+void drawBarcodeRegions(cv::Mat& image, const std::vector<cv::Rect>& regions) {
+  for (const auto& region : regions) {
+    cv::rectangle(image, region, cv::Scalar(0, 255, 0), 2);  // Draw rectangle with green color and thickness 2
+  }
+}
+
+
+void applyGaussianBlur(const std::vector<double>& input, std::vector<double>& output, int kernel_size) {
+  int half_kernel = kernel_size / 2;
+  double sigma = 1.0;
+  double sum = 0.0;
+  std::vector<double> kernel(kernel_size);
+
+  // Generate Gaussian kernel
+  for (int i = -half_kernel; i <= half_kernel; i++) {
+    double value = exp(-0.5 * i * i / (sigma * sigma));
+    kernel[i + half_kernel] = value;
+    sum += value;
+  }
+
+  // Normalize the kernel
+  for (int i = 0; i < kernel_size; i++) {
+    kernel[i] /= sum;
+  }
+
+  output.resize(input.size(), 0);
+
+  // Apply Gaussian kernel
+  for (size_t i = 0; i < input.size(); i++) {
+    double temp = 0.0;
+    for (int k = -half_kernel; k <= half_kernel; k++) {
+      int idx = i + k;
+      if (idx >= 0 && idx < input.size()) {
+        temp += input[idx] * kernel[k + half_kernel];
+      }
+    }
+    output[i] = temp;
+  }
+}
+void utcn::ip::Lab1::testOpenImage() {
+  const std::string abs_image_path = fileutil::getSingleFileAbsPath();
+  cv::Mat src = imread(abs_image_path, cv::IMREAD_COLOR);
+
+  if (!src.data) {
+    std::cerr << "Failed to open image." << std::endl;
+    return;
+  }
+
+  // Edge detection and barcode enhancement
+  cv::Mat edges = detectEdges(src);
+  cv::Mat enhancedEdges = enhanceBarcodeEdges(edges);
+  std::vector<cv::Rect> barcodeRegions = findBarcodeRegions(enhancedEdges);
+  std::vector<cv::Rect> filteredRegions = filterBarcodeRegions(barcodeRegions);
+
+  if (!filteredRegions.empty()) {
+    // Process each barcode region or the most promising one
+    for (const auto& region : filteredRegions) {
+      // Compute luminance and apply Gaussian blur on each region's central scanline or an optimal line
+      std::vector<double> luminance, smoothed_luminance;
+      computeLuminance(&src, region.y + region.height / 2, luminance);
+      applyGaussianBlur(luminance, smoothed_luminance, 5);
+    }
+  }
+
+  cv::imshow("Original", src);
+  imageutil::macOsWaitKey();
+}
